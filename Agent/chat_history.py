@@ -1,0 +1,156 @@
+
+
+def fetch_previous_conversations(user_id: str):
+    try:
+        # Connect to the events_for_redis database
+        conn = mysql.connector.connect(
+            host="localhost",
+            user="root",
+            password="Alliswell#1906",
+            database="events_for_redis"
+        )
+        cursor = conn.cursor(dictionary=True)
+ 
+        # Fetch user details
+        user_query = """
+            SELECT name, `like` as likes, dislike, age
+            FROM user_password2
+            WHERE user_id = %s
+        """
+        cursor.execute(user_query, (user_id,))
+        user_record = cursor.fetchone()
+        if user_record:
+            name = user_record.get('name', 'N/A')
+            likes = user_record.get('likes', 'none')
+            dislikes = user_record.get('dislike', 'none')
+            age = user_record.get('age', 'N/A')
+        else:
+            name, likes, dislikes, age = 'N/A', 'none', 'none', 'N/A'
+ 
+        user_details = {
+            'name': name,
+            'likes': f"({likes})" if likes != 'none' else likes,
+            'dislikes': f"({dislikes})" if dislikes != 'none' else dislikes,
+            'age': age
+        }
+ 
+        # Fetch recent events
+        mysql_query = """
+            SELECT content, context, created_at
+            FROM user_events
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            LIMIT 5
+        """
+        cursor.execute(mysql_query, (user_id,))
+        mysql_events_list = cursor.fetchall()
+ 
+        events_list = [
+            {'role': 'user', 'content': row['content'], 'context': row['context']}
+            for row in mysql_events_list
+        ]
+ 
+        return [user_details, events_list]
+ 
+    except mysql.connector.Error as err:
+        return f"Error fetching data from MySQL: {err}"
+    finally:
+        if 'conn' in locals() and conn.is_connected():
+            cursor.close()
+            conn.close()
+ 
+def insert(user_id: str, input_message: str, final_response_content: str, state: dict):
+    try:
+        # Connect to the events_for_redis database
+        conn = mysql.connector.connect(
+            host="localhost",      
+            user="root",  
+            password="Alliswell#1906",
+            database="events_for_redis"
+        )
+        cursor = conn.cursor()
+ 
+        # Define system message and process LLM response
+        system_message = (
+            "You are a helpful assistant. Please identify if the user's message contains any of the following personal details: "
+            "name, age, likes, or dislikes. Respond strictly in dictionary format with only the detected details, "
+            "Example output: {'name': 'John', 'age': '29', 'likes': 'reading', 'dislikes': 'loud music'}."
+            "If no personal details are present, respond as a friendly chatbot would to a general greeting or question."
+        )
+        messages = [{"role": "user", "content": input_message}]
+        raw_output = llm.invoke([{"role": "system", "content": system_message}] + messages)
+        output = raw_output.content.strip().replace("'''", "").replace("json", "").replace("```", "")
+ 
+        result = {"ans_type": "events", "details": {}}
+        try:
+            detected_info = ast.literal_eval(output)
+            if isinstance(detected_info, dict) and any(detected_info.values()):
+                result["ans_type"] = "personal_details"
+                result["details"] = detected_info
+        except (ValueError, SyntaxError) as e:
+            result["details"] = {"message": output}
+ 
+        # Insert or update user details
+        if result.get('ans_type') == "personal_details":
+            details = result.get('details', {})
+            cursor.execute("SELECT name, age, `like`, dislike FROM user_password2 WHERE user_id = %s", (user_id,))
+            existing_data = cursor.fetchone()
+ 
+            if existing_data:
+                existing_name, existing_age, existing_likes, existing_dislikes = (
+                    existing_data[0] or '',
+                    existing_data[1] or '',
+                    existing_data[2] or '',
+                    existing_data[3] or ''
+                )
+                updated_likes = (existing_likes + ', ' + details.get('likes', '')).strip(', ')
+                updated_dislikes = (existing_dislikes + ', ' + details.get('dislikes', '')).strip(', ')
+               
+                update_query = """
+                    UPDATE user_password2
+                    SET name = %s, age = %s, `like` = %s, dislike = %s
+                    WHERE user_id = %s
+                """
+                cursor.execute(update_query, (
+                    details.get('name', existing_name),
+                    details.get('age', existing_age),
+                    updated_likes,
+                    updated_dislikes,
+                    user_id
+                ))
+            else:
+                insert_query = """
+                    INSERT INTO user_password2 (user_id, password, name, `like`, dislike, age)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """
+                cursor.execute(insert_query, (
+                    user_id,
+                    'default_password',
+                    details.get('name', ''),
+                    details.get('likes', ''),
+                    details.get('dislikes', ''),
+                    details.get('age', None)
+                ))
+ 
+        # Insert user events into `user_events` table
+        if result.get('ans_type') == "events" or result.get('ans_type') == "personal_details":
+            event_query = """
+                INSERT INTO user_events (user_id, content, context, created_at)
+                VALUES (%s, %s, %s, %s)
+            """
+            cursor.execute(event_query, (
+                user_id,
+                input_message,
+                final_response_content,
+                datetime.now()
+            ))
+ 
+        conn.commit()
+        return "Data inserted successfully."
+ 
+    except mysql.connector.Error as err:
+        return f"Database error: {err}"
+    finally:
+        if 'conn' in locals() and conn.is_connected():
+            cursor.close()
+            conn.close()
