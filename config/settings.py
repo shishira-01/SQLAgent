@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
+ 
 class AppSettings(BaseSettings):
     GEMINI_API_KEY: str
     DB_HOST: str
@@ -12,6 +12,6 @@ class AppSettings(BaseSettings):
         env_file=".env",    # Path to the `.env` file.
         extra="ignore"      # Ignore extra environment variables not listed here.
     )
-
+ 
 # Initialize settings
 Appsettings = AppSettings()
