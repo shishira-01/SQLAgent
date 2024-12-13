@@ -1,8 +1,10 @@
-from core.llm_manager import LLMManger
+from core.llm_manager import LLMManager 
 from core.state_models import State
+from Agent.chat_history import ChatHistory
 
-llm = LLMManger()
-
+llm = LLMManager()
+fetch_previous_conversations = ChatHistory.fetch_previous_conversations()
+insert = ChatHistory.insert()
 
 def assistant(state: State):
     user_id=1234
